@@ -8,6 +8,8 @@ from werkzeug.wrappers import Response
 import frappe.utils
 
 from frappe_whatsapp.utils import get_whatsapp_account
+from frappe_whatsapp.utils.signature import is_valid_meta_signature
+from frappe.utils.password import get_decrypted_password
 
 
 @frappe.whitelist(allow_guest=True)
@@ -35,8 +37,25 @@ def get():
 
 	return Response(hub_challenge, status=200)
 
+def _meta_signature_ok():
+	"""Checks X-Hub-Signature-256 against the App Secret of every WhatsApp Account.
+
+	Fails closed: with no App Secret configured, every POST is rejected.
+	"""
+	secrets = [
+		get_decrypted_password("WhatsApp Account", name, "app_secret", raise_exception=False)
+		for name in frappe.get_all("WhatsApp Account", pluck="name")
+	]
+	return is_valid_meta_signature(
+		frappe.request.get_data(), frappe.get_request_header("X-Hub-Signature-256"), secrets
+	)
+
+
 def post():
 	"""Post."""
+	# Nothing is written before Meta's signature is verified.
+	if not _meta_signature_ok():
+		return Response("invalid signature", status=403)
 	data = frappe.local.form_dict
 	frappe.get_doc({
 		"doctype": "WhatsApp Notification Log",
